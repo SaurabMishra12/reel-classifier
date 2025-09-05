@@ -39,10 +39,10 @@ jobs:
     - name: Setup Expo and EAS CLI
       run: |
         npm install -g @expo/cli eas-cli
-        npx expo install --fix
+        CI=1 npx expo install --fix
 
     - name: Prebuild Android project
-      run: npx expo prebuild --platform android --clear --non-interactive
+      run: CI=1 npx expo prebuild --platform android --clean
 
     - name: Make gradlew executable
       run: chmod +x android/gradlew
