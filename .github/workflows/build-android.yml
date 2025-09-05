@@ -13,48 +13,83 @@ jobs:
     
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Setup Node.js
-      uses: actions/setup-node@v3
+      uses: actions/setup-node@v4
       with:
         node-version: '18'
         cache: 'npm'
 
     - name: Setup Java
-      uses: actions/setup-java@v3
+      uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
-        java-version: '11'
+        java-version: '17'
 
     - name: Setup Android SDK
-      uses: android-actions/setup-android@v2
+      uses: android-actions/setup-android@v3
 
     - name: Install dependencies
-      run: npm install
+      run: npm ci
 
-    - name: Setup Expo CLI
-      run: npm install -g @expo/cli eas-cli
+    - name: Create assets directory
+      run: mkdir -p assets
 
-    - name: Prebuild Android
-      run: npx expo prebuild --platform android --clear
+    - name: Setup Expo and EAS CLI
+      run: |
+        npm install -g @expo/cli eas-cli
+        npx expo install --fix
+
+    - name: Prebuild Android project
+      run: npx expo prebuild --platform android --clear --non-interactive
+
+    - name: Make gradlew executable
+      run: chmod +x android/gradlew
+
+    - name: Create local.properties
+      run: |
+        echo "sdk.dir=${ANDROID_HOME}" > android/local.properties
 
     - name: Build APK
       working-directory: ./android
       run: ./gradlew assembleRelease
 
-    - name: Upload APK
-      uses: actions/upload-artifact@v3
+    - name: Upload APK as artifact
+      uses: actions/upload-artifact@v4
       with:
-        name: app-release.apk
+        name: reel-classifier-apk
         path: android/app/build/outputs/apk/release/app-release.apk
+        retention-days: 30
+
+    - name: Get current date
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      id: date
+      run: echo "date=$(date +'%Y-%m-%d-%H%M')" >> $GITHUB_OUTPUT
 
     - name: Create Release
-      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: v${{ github.run_number }}
-        name: Release v${{ github.run_number }}
+        tag_name: build-${{ steps.date.outputs.date }}
+        name: APK Build ${{ steps.date.outputs.date }}
+        body: |
+          📱 **Reel Classifier APK Build**
+          
+          Built from commit: ${{ github.sha }}
+          
+          **Installation Instructions:**
+          1. Download the APK file below
+          2. Enable "Install from unknown sources" on your Android device
+          3. Install the APK
+          4. Open the app and enjoy!
+          
+          **Features:**
+          - Instagram Reel classification using Gemini AI
+          - Share intent support
+          - Offline storage
         files: android/app/build/outputs/apk/release/app-release.apk
+        draft: false
+        prerelease: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
