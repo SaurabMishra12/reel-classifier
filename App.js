@@ -232,15 +232,14 @@ export default function App() {
       return;
     }
 
-    if (!caption.trim()) {
-      setError('Please enter a caption or description');
-      return;
-    }
+    // Caption is now optional - if not provided, AI will generate description after saving
+    const captionText = caption.trim() || 'Instagram reel content';
 
     // Show category selection modal for manual classification
     setPendingReelData({
       url: sharedUrl,
-      caption: caption,
+      caption: captionText,
+      needsAiDescription: !caption.trim(), // Flag to generate AI description later
       timestamp: new Date().toISOString()
     });
     
@@ -266,7 +265,7 @@ export default function App() {
         timestamp: new Date().toISOString(),
         dateAdded: new Date().toLocaleDateString(),
         timeAdded: new Date().toLocaleTimeString(),
-        description: 'Generating description...' // Placeholder
+        description: pendingReelData?.needsAiDescription ? 'Generating description...' : text || caption
       };
 
       const updatedReels = [newReel, ...savedReels];
@@ -282,15 +281,19 @@ export default function App() {
       
       Alert.alert(
         'Reel Saved! 🎉', 
-        'Your reel has been saved. Generating AI description...',
+        pendingReelData?.needsAiDescription 
+          ? 'Your reel has been saved. Generating AI description...'
+          : 'Your reel has been saved successfully!',
         [
           { text: 'OK' }, 
           { text: 'View Library', onPress: () => setCurrentView('library') }
         ]
       );
 
-      // Generate AI description after saving
-      generateReelDescription(newReel.id, url, text);
+      // Generate AI description if needed
+      if (pendingReelData?.needsAiDescription) {
+        generateReelDescription(newReel.id, url, text || 'Instagram reel content');
+      }
       
     } catch (error) {
       Alert.alert('Error', 'Failed to save reel: ' + error.message);
@@ -582,9 +585,9 @@ Write a description that captures the essence of the content in an engaging way.
         <Text style={styles.instructionTitle}>📱 How to Save Reels:</Text>
         <Text style={styles.instructionText}>
           1. Share Instagram reel to this app OR paste URL below{'\n'}
-          2. Add a caption/description{'\n'}
+          2. Add a caption/description (optional - AI will generate if empty){'\n'}
           3. Choose a category manually{'\n'}
-          4. AI will generate a description after saving
+          4. AI will enhance/generate description after saving
         </Text>
       </View>
 
@@ -615,10 +618,10 @@ Write a description that captures the essence of the content in an engaging way.
           onChangeText={setSharedUrl}
         />
         
-        <Text style={styles.sectionTitle}>📝 Caption/Description:</Text>
+        <Text style={styles.sectionTitle}>📝 Caption/Description (Optional):</Text>
         <TextInput
           style={styles.textAreaInput}
-          placeholder="Enter a caption or description for this reel..."
+          placeholder="Enter a caption or description (optional - AI will generate if empty)..."
           value={caption}
           onChangeText={setCaption}
           multiline
@@ -626,9 +629,9 @@ Write a description that captures the essence of the content in an engaging way.
         />
         
         <TouchableOpacity 
-          style={[styles.button, styles.primaryButton, (!sharedUrl.trim() || !caption.trim()) && styles.buttonDisabled]}
+          style={[styles.button, styles.primaryButton, !sharedUrl.trim() && styles.buttonDisabled]}
           onPress={handleClassify}
-          disabled={!sharedUrl.trim() || !caption.trim() || isClassifying}
+          disabled={!sharedUrl.trim() || isClassifying}
         >
           {isClassifying ? (
             <ActivityIndicator color="#fff" />
@@ -799,44 +802,231 @@ Write a description that captures the essence of the content in an engaging way.
     );
   };
 
+  // Render Google-style reel item
+  const renderGoogleStyleReelItem = ({ item }) => {
+    const openReel = () => {
+      Alert.alert(
+        '🎬 Open Reel',
+        'Choose how to view this reel:',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: '🔗 Open Link', 
+            onPress: () => {
+              Linking.openURL(item.url).catch(err => 
+                Alert.alert('Error', 'Could not open link')
+              );
+            }
+          },
+          {
+            text: '📋 Copy Link',
+            onPress: () => {
+              Clipboard.setString(item.url);
+              Alert.alert('Copied!', 'Reel link copied to clipboard');
+            }
+          }
+        ]
+      );
+    };
+
+    const formatTime = (timestamp) => {
+      const date = new Date(timestamp);
+      const now = new Date();
+      const diffMs = now - date;
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffHours = Math.floor(diffMs / 3600000);
+      const diffDays = Math.floor(diffMs / 86400000);
+
+      if (diffMins < 60) return `${diffMins}m ago`;
+      if (diffHours < 24) return `${diffHours}h ago`;
+      if (diffDays < 7) return `${diffDays}d ago`;
+      return date.toLocaleDateString();
+    };
+
+    return (
+      <TouchableOpacity 
+        style={styles.googleCard} 
+        onPress={openReel}
+        activeOpacity={0.95}
+      >
+        <View style={styles.googleCardHeader}>
+          <View style={styles.googleCardIcon}>
+            <Text style={styles.googleCardIconText}>🎬</Text>
+          </View>
+          
+          <View style={styles.googleCardHeaderInfo}>
+            <Text style={styles.googleCardTitle} numberOfLines={2}>
+              {item.caption}
+            </Text>
+            <Text style={styles.googleCardUrl} numberOfLines={1}>
+              {item.url.replace('https://', '').replace('www.', '')}
+            </Text>
+          </View>
+          
+          <TouchableOpacity 
+            style={styles.googleCardMenuButton}
+            onPress={() => {
+              Alert.alert(
+                'Options',
+                'Choose an action:',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { 
+                    text: '🔗 Open Link', 
+                    onPress: () => Linking.openURL(item.url).catch(err => 
+                      Alert.alert('Error', 'Could not open link')
+                    )
+                  },
+                  {
+                    text: '📋 Copy Link',
+                    onPress: () => {
+                      Clipboard.setString(item.url);
+                      Alert.alert('Copied!', 'Reel link copied to clipboard');
+                    }
+                  },
+                  { 
+                    text: '🗑️ Delete', 
+                    style: 'destructive',
+                    onPress: () => {
+                      Alert.alert(
+                        'Delete Reel',
+                        'Are you sure you want to remove this reel from your library?',
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          { text: 'Delete', style: 'destructive', onPress: () => deleteReel(item.id) }
+                        ]
+                      );
+                    }
+                  }
+                ]
+              );
+            }}
+          >
+            <Text style={styles.googleCardMenuIcon}>⋮</Text>
+          </TouchableOpacity>
+        </View>
+        
+        {item.description && item.description !== 'Generating description...' && (
+          <View style={styles.googleCardDescription}>
+            <Text style={styles.googleCardDescriptionText}>
+              {item.description}
+            </Text>
+          </View>
+        )}
+        
+        <View style={styles.googleCardFooter}>
+          <View style={styles.googleCardCategoryContainer}>
+            <View style={styles.googleCardCategory}>
+              <Text style={styles.googleCardCategoryText}>{item.category}</Text>
+            </View>
+          </View>
+          
+          <Text style={styles.googleCardTime}>
+            {formatTime(item.timestamp)}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
   // Render library view
   const renderLibraryView = () => (
     <View style={styles.container}>
-      <Text style={styles.title}>📚 Your Reel Library</Text>
-      
-      {/* Search Bar */}
-      <TextInput
-        style={styles.searchInput}
-        placeholder="🔍 Search reels..."
-        value={searchQuery}
-        onChangeText={setSearchQuery}
-      />
-      
-      {/* Category Filter */}
-      {renderCategoryFilter()}
-      
-      {/* Stats */}
-      <View style={styles.statsContainer}>
-        <Text style={styles.statsText}>
-          Showing {filteredReels.length} of {savedReels.length} reels
-          {selectedCategory ? ` in "${selectedCategory}"` : ''}
-        </Text>
+      {/* Google-style Header */}
+      <View style={styles.googleHeader}>
+        <Text style={styles.googleTitle}>Your Library</Text>
+        <Text style={styles.googleSubtitle}>{savedReels.length} saved reels</Text>
       </View>
       
-      {/* Reels List */}
+      {/* Google-style Search Bar */}
+      <View style={styles.googleSearchContainer}>
+        <View style={styles.googleSearchBar}>
+          <Text style={styles.searchIcon}>🔍</Text>
+          <TextInput
+            style={styles.googleSearchInput}
+            placeholder="Search your reels..."
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholderTextColor="#5f6368"
+          />
+          {searchQuery ? (
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <Text style={styles.clearSearchIcon}>✕</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </View>
+      
+      {/* Google-style Category Filter Chips */}
+      <View style={styles.googleChipsContainer}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.googleChipsScrollView}>
+          <TouchableOpacity 
+            style={[styles.googleChip, !selectedCategory && styles.googleChipActive]}
+            onPress={() => {
+              setSelectedCategory('');
+              setFilteredReels(savedReels);
+            }}
+          >
+            <Text style={[styles.googleChipText, !selectedCategory && styles.googleChipTextActive]}>
+              All reels
+            </Text>
+          </TouchableOpacity>
+          
+          {[...DEFAULT_CATEGORIES, ...customCategories].map((cat) => {
+            const count = savedReels.filter(reel => reel.category === cat).length;
+            if (count === 0) return null;
+            
+            return (
+              <TouchableOpacity 
+                key={cat}
+                style={[styles.googleChip, selectedCategory === cat && styles.googleChipActive]}
+                onPress={() => {
+                  setSelectedCategory(selectedCategory === cat ? '' : cat);
+                  filterReelsByCategory(selectedCategory === cat ? '' : cat);
+                }}
+              >
+                <Text style={[styles.googleChipText, selectedCategory === cat && styles.googleChipTextActive]}>
+                  {cat} ({count})
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+      
+      {/* Google-style Results Count */}
+      {searchQuery || selectedCategory ? (
+        <View style={styles.googleResultsBar}>
+          <Text style={styles.googleResultsText}>
+            {filteredReels.length} results
+            {selectedCategory ? ` in ${selectedCategory}` : ''}
+            {searchQuery ? ` for "${searchQuery}"` : ''}
+          </Text>
+        </View>
+      ) : null}
+      
+      {/* Google-style Reels Grid */}
       {filteredReels.length > 0 ? (
         <FlatList
           data={filteredReels}
-          renderItem={renderReelItem}
+          renderItem={renderGoogleStyleReelItem}
           keyExtractor={(item) => item.id}
           showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.googleReelsList}
+          numColumns={1}
         />
       ) : (
-        <View style={styles.emptyContainer}>
-          <Text style={styles.emptyText}>
+        <View style={styles.googleEmptyContainer}>
+          <Text style={styles.googleEmptyIcon}>
+            {savedReels.length === 0 ? '🎬' : '🔍'}
+          </Text>
+          <Text style={styles.googleEmptyTitle}>
+            {savedReels.length === 0 ? 'No reels yet' : 'No results found'}
+          </Text>
+          <Text style={styles.googleEmptyText}>
             {savedReels.length === 0 
-              ? '🎬 No reels saved yet.\nShare some Instagram reels to get started!' 
-              : '🔍 No reels found for current filter.'
+              ? 'Start saving Instagram reels to build your library' 
+              : 'Try adjusting your search or filters'
             }
           </Text>
         </View>
@@ -1772,5 +1962,202 @@ const styles = StyleSheet.create({
   savingIndicator: {
     alignItems: 'center',
     marginTop: 10,
+  },
+  
+  // Google-style Library Styles
+  googleHeader: {
+    paddingHorizontal: 4,
+    paddingBottom: 16,
+  },
+  googleTitle: {
+    fontSize: 28,
+    fontWeight: '400',
+    color: '#202124',
+    marginBottom: 4,
+    fontFamily: 'Roboto',
+  },
+  googleSubtitle: {
+    fontSize: 14,
+    color: '#5f6368',
+    fontWeight: '400',
+  },
+  googleSearchContainer: {
+    paddingHorizontal: 4,
+    marginBottom: 16,
+  },
+  googleSearchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#dadce0',
+  },
+  searchIcon: {
+    fontSize: 16,
+    color: '#9aa0a6',
+    marginRight: 12,
+  },
+  googleSearchInput: {
+    flex: 1,
+    fontSize: 16,
+    color: '#202124',
+    padding: 0,
+  },
+  clearSearchIcon: {
+    fontSize: 16,
+    color: '#9aa0a6',
+    padding: 4,
+  },
+  googleChipsContainer: {
+    marginBottom: 16,
+    paddingHorizontal: 4,
+  },
+  googleChipsScrollView: {
+    flexGrow: 0,
+  },
+  googleChip: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#dadce0',
+  },
+  googleChipActive: {
+    backgroundColor: '#e8f0fe',
+    borderColor: '#1a73e8',
+  },
+  googleChipText: {
+    fontSize: 13,
+    color: '#3c4043',
+    fontWeight: '500',
+  },
+  googleChipTextActive: {
+    color: '#1a73e8',
+  },
+  googleResultsBar: {
+    paddingHorizontal: 4,
+    paddingBottom: 12,
+  },
+  googleResultsText: {
+    fontSize: 13,
+    color: '#70757a',
+  },
+  googleReelsList: {
+    paddingHorizontal: 4,
+  },
+  googleCard: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#dadce0',
+    overflow: 'hidden',
+  },
+  googleCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    padding: 16,
+  },
+  googleCardIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#f8f9fa',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  googleCardIconText: {
+    fontSize: 18,
+  },
+  googleCardHeaderInfo: {
+    flex: 1,
+    marginRight: 8,
+  },
+  googleCardTitle: {
+    fontSize: 16,
+    color: '#1a0dab',
+    fontWeight: '400',
+    lineHeight: 20,
+    marginBottom: 4,
+  },
+  googleCardUrl: {
+    fontSize: 14,
+    color: '#006621',
+    fontWeight: '400',
+  },
+  googleCardMenuButton: {
+    padding: 4,
+  },
+  googleCardMenuIcon: {
+    fontSize: 16,
+    color: '#5f6368',
+  },
+  googleCardDescription: {
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+  },
+  googleCardDescriptionText: {
+    fontSize: 14,
+    color: '#3c4043',
+    lineHeight: 20,
+  },
+  googleCardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#f8f9fa',
+    borderTopWidth: 1,
+    borderTopColor: '#e8eaed',
+  },
+  googleCardCategoryContainer: {
+    flex: 1,
+  },
+  googleCardCategory: {
+    backgroundColor: '#e8f0fe',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    alignSelf: 'flex-start',
+  },
+  googleCardCategoryText: {
+    fontSize: 12,
+    color: '#1a73e8',
+    fontWeight: '500',
+  },
+  googleCardTime: {
+    fontSize: 12,
+    color: '#70757a',
+  },
+  googleEmptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 80,
+    paddingHorizontal: 40,
+  },
+  googleEmptyIcon: {
+    fontSize: 48,
+    marginBottom: 16,
+  },
+  googleEmptyTitle: {
+    fontSize: 22,
+    color: '#3c4043',
+    fontWeight: '400',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  googleEmptyText: {
+    fontSize: 14,
+    color: '#70757a',
+    textAlign: 'center',
+    lineHeight: 20,
   },
 });
