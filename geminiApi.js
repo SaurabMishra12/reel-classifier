@@ -156,3 +156,160 @@ const processApiResponse = (response) => {
     throw new Error('Failed to classify text. Please try again.');
   }
 };
+
+// Default categories for suggestions
+const DEFAULT_CATEGORIES = [
+  'Motivational', 'Gym', 'AI/ML', 'Entertainment', 'Communication', 
+  'Ideas', 'Coding', 'UI/UX', 'Job', 'Internships', 'Love', 
+  'Poetry', 'Songs', 'News', 'Sports', 'Food', 'Travel', 'Fashion'
+];
+
+/**
+ * Process API response for multiple category suggestions
+ * 
+ * @param {Object} response - The API response object
+ * @param {Array} validCategories - Array of valid categories
+ * @returns {Object} - Object with primary category and suggestions
+ */
+const processApiResponseWithSuggestions = (response, validCategories) => {
+  try {
+    const result = response.data.candidates[0].content.parts[0].text.trim();
+    
+    // Try to parse as JSON first
+    try {
+      const parsed = JSON.parse(result);
+      if (parsed.primary && parsed.suggestions) {
+        // Validate categories
+        const validPrimary = validCategories.includes(parsed.primary) ? parsed.primary : 'Other';
+        const validSuggestions = parsed.suggestions
+          .filter(cat => validCategories.includes(cat))
+          .slice(0, 3);
+        
+        // Ensure we have at least 3 suggestions
+        while (validSuggestions.length < 3) {
+          const fallback = ['Other', 'Entertainment', 'Communication'][validSuggestions.length];
+          if (!validSuggestions.includes(fallback)) {
+            validSuggestions.push(fallback);
+          }
+        }
+        
+        return {
+          primary: validPrimary,
+          suggestions: validSuggestions
+        };
+      }
+    } catch (parseError) {
+      // If not JSON, treat as single category
+      const category = validCategories.includes(result) ? result : 'Other';
+      return {
+        primary: category,
+        suggestions: [category, 'Entertainment', 'Communication']
+      };
+    }
+    
+    // Fallback
+    return {
+      primary: 'Other',
+      suggestions: ['Other', 'Entertainment', 'Communication']
+    };
+  } catch (error) {
+    console.error('Error processing API response:', error);
+    return {
+      primary: 'Other',
+      suggestions: ['Other', 'Entertainment', 'Communication']
+    };
+  }
+};
+
+/**
+ * Classifies the given Instagram reel caption text and returns multiple category suggestions
+ * 
+ * @param {string} caption - The Instagram reel caption text to classify
+ * @param {Array} availableCategories - Array of available categories to choose from
+ * @returns {Promise<{primary: string, suggestions: Array}>} - Primary category and top 3 suggestions
+ */
+export const classifyTextWithSuggestions = async (caption, availableCategories = []) => {
+  try {
+    // Get the API key from storage
+    const apiKey = await getApiKey();
+    
+    if (!apiKey) {
+      throw new Error('Please set your Gemini API key in the settings');
+    }
+
+    // Combine default and custom categories
+    const allCategories = [...DEFAULT_CATEGORIES, ...availableCategories];
+    const categoriesStr = allCategories.join(', ');
+    
+    // System instruction for multiple suggestions
+    const systemInstruction = `Analyze this Instagram reel content and suggest the top 3 most relevant categories from this list: [${categoriesStr}]. 
+    
+    Format your response as JSON:
+    {
+      "primary": "most_relevant_category",
+      "suggestions": ["category1", "category2", "category3"]
+    }
+    
+    Only use categories from the provided list. If the content doesn't clearly fit any category, use "Other" as primary.`;
+    
+    // Prepare the request payload
+    const payload = {
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text: `${systemInstruction}\n\nText to classify: ${caption}`
+            }
+          ]
+        }
+      ],
+      generationConfig: {
+        temperature: 0.3,
+        topK: 3,
+        topP: 0.8,
+        maxOutputTokens: 100
+      }
+    };
+
+    // Try with Gemini 2.5 Pro first
+    try {
+      const response = await axios.post(
+        `${API_URL_2_5_PRO}?key=${apiKey}`,
+        payload,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          timeout: 30000
+        }
+      );
+
+      return processApiResponseWithSuggestions(response, allCategories);
+    } catch (error) {
+      console.log('Gemini 2.5 Pro failed, trying Gemini 2.0 Flash...');
+      
+      // Fallback to Gemini 2.0 Flash
+      const response = await axios.post(
+        `${API_URL_2_0}?key=${apiKey}`,
+        payload,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          timeout: 30000
+        }
+      );
+
+      return processApiResponseWithSuggestions(response, allCategories);
+    }
+  } catch (error) {
+    console.error('Error classifying text:', error);
+    
+    // Return fallback suggestions
+    return {
+      primary: 'Other',
+      suggestions: ['Other', 'Entertainment', 'Communication']
+    };
+  }
+};
