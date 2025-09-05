@@ -138,18 +138,19 @@ export const classifyText = async (caption) => {
  * @returns {string} - The classification result
  */
 const processApiResponse = (response) => {
-  // Extract the classification result
-  const result = response.data.candidates[0].content.parts[0].text.trim();
-  
-  // Validate that the result is one of our expected categories
-  const validCategories = ['Motivational', 'Gym', 'Communication', 'Ideas', 'Coding', 'UI', 'ML-AI', 'Job', 'Internships', 'love', 'sayari', 'songs'];
-  
-  if (validCategories.includes(result)) {
-    return result;
-  } else {
-    // Default to a generic category if the result doesn't match any expected category
-    return 'Other';
-  }
+  try {
+    // Extract the classification result
+    const result = response.data.candidates[0].content.parts[0].text.trim();
+    
+    // Validate that the result is one of our expected categories
+    const validCategories = ['Motivational', 'Gym', 'Communication', 'Ideas', 'Coding', 'UI', 'ML-AI', 'Job', 'Internships', 'love', 'sayari', 'songs'];
+    
+    if (validCategories.includes(result)) {
+      return result;
+    } else {
+      // Default to a generic category if the result doesn't match any expected category
+      return 'Other';
+    }
   } catch (error) {
     console.error('Error classifying text:', error);
     throw new Error('Failed to classify text. Please try again.');
