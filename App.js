@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, Text, View, TextInput, TouchableOpacity, ActivityIndicator, 
-  ScrollView, SafeAreaView, StatusBar, Modal, Alert, FlatList, Switch 
+  ScrollView, SafeAreaView, StatusBar, Modal, Alert, FlatList, Switch,
+  Linking, Clipboard
 } from 'react-native';
 import { useShareIntent } from 'expo-share-intent';
 import { classifyText, classifyTextWithSuggestions, saveApiKey, getApiKey, hasApiKey } from './geminiApi';
@@ -155,19 +156,46 @@ export default function App() {
 
   // Handle shared content from Instagram
   const handleSharedContent = async (content) => {
-    setSharedUrl(content);
+    // Extract Instagram URL if present
+    const instagramMatch = content.match(/https?:\/\/(?:www\.)?instagram\.com\/reel\/[A-Za-z0-9_-]+\/?/);
+    const finalUrl = instagramMatch ? instagramMatch[0] : content;
+    
+    // Start the category selection workflow
+    handleReelShare(finalUrl);
+  };
+
+  // Handle reel sharing workflow
+  const handleReelShare = async (url) => {
     setCurrentView('home');
     
-    if (autoSave && isApiKeySet) {
-      await handleAutoClassifyAndSave(content);
-    } else {
-      setCaption(content);
-      Alert.alert(
-        'Reel Shared',
-        'Instagram reel received! Please classify and save it.',
-        [{ text: 'OK' }]
-      );
+    // Store the shared reel data
+    setPendingReelData({
+      url: url,
+      caption: url.includes('instagram.com') ? 'Shared Instagram reel' : url,
+      timestamp: new Date().toISOString()
+    });
+
+    // Get AI suggestions if API key is available
+    if (isApiKeySet) {
+      try {
+        setIsClassifying(true);
+        const captionText = url.includes('instagram.com') ? 
+          'Shared Instagram reel content' : url;
+        
+        const result = await classifyTextWithSuggestions(captionText, customCategories);
+        setPrimarySuggestion(result.primary);
+        setCategorySuggestions(result.suggestions);
+      } catch (error) {
+        console.error('AI suggestion failed:', error);
+        setPrimarySuggestion('');
+        setCategorySuggestions([]);
+      } finally {
+        setIsClassifying(false);
+      }
     }
+
+    // Show category selection modal
+    setShowCategorySuggestions(true);
   };
 
   // Auto classify and show suggestions
@@ -278,6 +306,44 @@ export default function App() {
 
   // Save reel with user-selected category from suggestions
   const saveReelWithSelectedCategory = async (selectedCategory) => {
+    // First prompt for additional notes
+    Alert.prompt(
+      'Add Notes (Optional)',
+      'Any additional details about this reel?',
+      [
+        { text: 'Skip', onPress: () => saveReelToStorage(selectedCategory, '') },
+        { 
+          text: 'Save', 
+          onPress: (notes) => saveReelToStorage(selectedCategory, notes || '')
+        }
+      ],
+      'plain-text',
+      '',
+      'default'
+    );
+  };
+
+  // Save reel with new category (creates category and saves reel)
+  const saveReelWithNewCategory = async (newCategory) => {
+    // First prompt for additional notes
+    Alert.prompt(
+      'Add Notes (Optional)',
+      'Any additional details about this reel?',
+      [
+        { text: 'Skip', onPress: () => saveReelToStorageWithNewCategory(newCategory, '') },
+        { 
+          text: 'Save', 
+          onPress: (notes) => saveReelToStorageWithNewCategory(newCategory, notes || '')
+        }
+      ],
+      'plain-text',
+      '',
+      'default'
+    );
+  };
+
+  // Actually save reel to storage
+  const saveReelToStorage = async (selectedCategory, notes) => {
     try {
       setIsSaving(true);
       
@@ -286,8 +352,10 @@ export default function App() {
         url: pendingReelData.url,
         caption: pendingReelData.caption,
         category: selectedCategory,
+        notes: notes,
         timestamp: pendingReelData.timestamp,
-        dateAdded: new Date().toLocaleDateString()
+        dateAdded: new Date().toLocaleDateString(),
+        timeAdded: new Date().toLocaleTimeString()
       };
 
       const updatedReels = [newReel, ...savedReels];
@@ -304,7 +372,61 @@ export default function App() {
       
       Alert.alert(
         'Reel Saved! 🎉', 
-        `Your reel has been saved with category "${selectedCategory}".`,
+        `Your reel has been saved to "${selectedCategory}"${notes ? ' with your notes' : ''}.`,
+        [
+          { text: 'OK' }, 
+          { text: 'View Library', onPress: () => setCurrentView('library') }
+        ]
+      );
+      
+    } catch (error) {
+      Alert.alert('Error', 'Failed to save reel: ' + error.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Save reel with new category and notes
+  const saveReelToStorageWithNewCategory = async (newCategory, notes) => {
+    try {
+      setIsSaving(true);
+      
+      // Add the new category to custom categories if it doesn't exist
+      const allCategories = [...DEFAULT_CATEGORIES, ...customCategories];
+      if (!allCategories.includes(newCategory)) {
+        const updatedCustomCategories = [...customCategories, newCategory];
+        setCustomCategories(updatedCustomCategories);
+        await AsyncStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(updatedCustomCategories));
+      }
+      
+      // Save the reel with the new category
+      const newReel = {
+        id: Date.now().toString(),
+        url: pendingReelData.url,
+        caption: pendingReelData.caption,
+        category: newCategory,
+        notes: notes,
+        timestamp: pendingReelData.timestamp,
+        dateAdded: new Date().toLocaleDateString(),
+        timeAdded: new Date().toLocaleTimeString()
+      };
+
+      const updatedReels = [newReel, ...savedReels];
+      await AsyncStorage.setItem(REELS_STORAGE_KEY, JSON.stringify(updatedReels));
+      
+      setSavedReels(updatedReels);
+      setFilteredReels(updatedReels);
+      
+      // Clear inputs and close modal
+      setPendingReelData(null);
+      setShowCategorySuggestions(false);
+      setPrimarySuggestion('');
+      setCategorySuggestions([]);
+      setNewCategoryName('');
+      
+      Alert.alert(
+        'Category Created & Reel Saved! 🎉', 
+        `New category "${newCategory}" created and your reel has been saved${notes ? ' with your notes' : ''}.`,
         [
           { text: 'OK' }, 
           { text: 'View Library', onPress: () => setCurrentView('library') }
@@ -548,32 +670,112 @@ export default function App() {
     );
   };
 
-  // Render reel item
-  const renderReelItem = ({ item }) => (
-    <View style={styles.reelItem}>
-      <View style={styles.reelHeader}>
-        <Text style={styles.reelCategory}>{item.category}</Text>
-        <Text style={styles.reelDate}>{item.dateAdded}</Text>
-      </View>
-      
-      <Text style={styles.reelCaption} numberOfLines={3}>
-        {item.caption}
-      </Text>
-      
-      <Text style={styles.reelUrl} numberOfLines={1}>
-        {item.url}
-      </Text>
-      
-      <View style={styles.reelActions}>
-        <TouchableOpacity 
-          style={styles.deleteButton}
-          onPress={() => deleteReel(item.id)}
-        >
-          <Text style={styles.deleteButtonText}>🗑️ Delete</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
+  // Render reel item with playlist-like design
+  const renderReelItem = ({ item }) => {
+    const openReel = () => {
+      Alert.alert(
+        '🎬 Open Reel',
+        'Choose how to view this reel:',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: '🔗 Open Link', 
+            onPress: () => {
+              // Open the Instagram URL
+              Linking.openURL(item.url).catch(err => 
+                Alert.alert('Error', 'Could not open link')
+              );
+            }
+          },
+          {
+            text: '📋 Copy Link',
+            onPress: () => {
+              Clipboard.setString(item.url);
+              Alert.alert('Copied!', 'Reel link copied to clipboard');
+            }
+          }
+        ]
+      );
+    };
+
+    const formatTime = (timestamp) => {
+      const date = new Date(timestamp);
+      const now = new Date();
+      const diffMs = now - date;
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffHours = Math.floor(diffMs / 3600000);
+      const diffDays = Math.floor(diffMs / 86400000);
+
+      if (diffMins < 60) return `${diffMins}m ago`;
+      if (diffHours < 24) return `${diffHours}h ago`;
+      if (diffDays < 7) return `${diffDays}d ago`;
+      return date.toLocaleDateString();
+    };
+
+    return (
+      <TouchableOpacity 
+        style={styles.playlistItem} 
+        onPress={openReel}
+        activeOpacity={0.7}
+      >
+        <View style={styles.playlistItemLeft}>
+          {/* Thumbnail placeholder */}
+          <View style={styles.reelThumbnail}>
+            <Text style={styles.thumbnailIcon}>🎬</Text>
+          </View>
+          
+          <View style={styles.reelInfo}>
+            <Text style={styles.reelTitle} numberOfLines={2}>
+              {item.caption.length > 50 ? 
+                item.caption.substring(0, 50) + '...' : 
+                item.caption
+              }
+            </Text>
+            
+            {item.notes && (
+              <Text style={styles.reelNotes} numberOfLines={1}>
+                💭 {item.notes}
+              </Text>
+            )}
+            
+            <View style={styles.reelMeta}>
+              <Text style={styles.reelCategory}>📁 {item.category}</Text>
+              <Text style={styles.reelTime}>⏰ {formatTime(item.timestamp)}</Text>
+            </View>
+            
+            <Text style={styles.reelUrlPreview} numberOfLines={1}>
+              🔗 {item.url}
+            </Text>
+          </View>
+        </View>
+        
+        <View style={styles.playlistItemRight}>
+          <TouchableOpacity 
+            style={styles.playButton}
+            onPress={openReel}
+          >
+            <Text style={styles.playButtonIcon}>▶️</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={styles.deleteButton}
+            onPress={() => {
+              Alert.alert(
+                'Delete Reel',
+                'Are you sure you want to remove this reel from your library?',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Delete', style: 'destructive', onPress: () => deleteReel(item.id) }
+                ]
+              );
+            }}
+          >
+            <Text style={styles.deleteButtonIcon}>🗑️</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   // Render library view
   const renderLibraryView = () => (
@@ -785,48 +987,112 @@ export default function App() {
         </View>
       </Modal>
 
-      {/* Category Suggestions Modal */}
+      {/* Category Selection Modal */}
       <Modal visible={showCategorySuggestions} transparent animationType="slide">
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            <Text style={styles.modalTitle}>🤖 AI Category Suggestions</Text>
+          <View style={[styles.modalContainer, styles.categoryModalContainer]}>
+            <Text style={styles.modalTitle}>📁 Choose Category</Text>
             <Text style={styles.modalDescription}>
-              Our AI has analyzed your reel and suggests these categories. 
-              Choose the one that best fits:
+              Save your reel to a category (like adding to a playlist):
             </Text>
             
-            {/* Primary Suggestion */}
-            {primarySuggestion && (
-              <View style={styles.primarySuggestionContainer}>
-                <Text style={styles.primarySuggestionLabel}>✨ Recommended:</Text>
-                <TouchableOpacity 
-                  style={styles.primarySuggestionButton}
-                  onPress={() => saveReelWithSelectedCategory(primarySuggestion)}
-                  disabled={isSaving}
-                >
-                  <Text style={styles.primarySuggestionText}>{primarySuggestion}</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-            
-            {/* Other Suggestions */}
-            {categorySuggestions.length > 0 && (
-              <View style={styles.otherSuggestionsContainer}>
-                <Text style={styles.otherSuggestionsLabel}>Other options:</Text>
-                <ScrollView style={styles.suggestionsScrollView}>
+            <ScrollView style={styles.categoryScrollView} showsVerticalScrollIndicator={false}>
+              {/* AI Suggestions Section */}
+              {(primarySuggestion || categorySuggestions.length > 0) && (
+                <View style={styles.aiSuggestionsSection}>
+                  <Text style={styles.sectionTitle}>🤖 AI Suggestions:</Text>
+                  
+                  {primarySuggestion && (
+                    <TouchableOpacity 
+                      style={[styles.categoryOption, styles.primarySuggestionOption]}
+                      onPress={() => saveReelWithSelectedCategory(primarySuggestion)}
+                      disabled={isSaving}
+                    >
+                      <Text style={styles.categoryOptionIcon}>✨</Text>
+                      <Text style={[styles.categoryOptionText, styles.primarySuggestionText]}>
+                        {primarySuggestion}
+                      </Text>
+                      <Text style={styles.recommendedBadge}>Recommended</Text>
+                    </TouchableOpacity>
+                  )}
+                  
                   {categorySuggestions.map((suggestion, index) => (
                     <TouchableOpacity 
-                      key={index}
-                      style={styles.suggestionButton}
+                      key={`ai-${index}`}
+                      style={[styles.categoryOption, styles.aiSuggestionOption]}
                       onPress={() => saveReelWithSelectedCategory(suggestion)}
                       disabled={isSaving}
                     >
-                      <Text style={styles.suggestionText}>{suggestion}</Text>
+                      <Text style={styles.categoryOptionIcon}>🔮</Text>
+                      <Text style={styles.categoryOptionText}>{suggestion}</Text>
                     </TouchableOpacity>
                   ))}
-                </ScrollView>
+                </View>
+              )}
+              
+              {/* Default Categories Section */}
+              <View style={styles.defaultCategoriesSection}>
+                <Text style={styles.sectionTitle}>📋 Default Categories:</Text>
+                {DEFAULT_CATEGORIES.map((category, index) => (
+                  <TouchableOpacity 
+                    key={`default-${index}`}
+                    style={styles.categoryOption}
+                    onPress={() => saveReelWithSelectedCategory(category)}
+                    disabled={isSaving}
+                  >
+                    <Text style={styles.categoryOptionIcon}>📂</Text>
+                    <Text style={styles.categoryOptionText}>{category}</Text>
+                  </TouchableOpacity>
+                ))}
               </View>
-            )}
+              
+              {/* Custom Categories Section */}
+              {customCategories.length > 0 && (
+                <View style={styles.customCategoriesSection}>
+                  <Text style={styles.sectionTitle}>🎨 Your Categories:</Text>
+                  {customCategories.map((category, index) => (
+                    <TouchableOpacity 
+                      key={`custom-${index}`}
+                      style={[styles.categoryOption, styles.customCategoryOption]}
+                      onPress={() => saveReelWithSelectedCategory(category)}
+                      disabled={isSaving}
+                    >
+                      <Text style={styles.categoryOptionIcon}>⭐</Text>
+                      <Text style={styles.categoryOptionText}>{category}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+              
+              {/* Add New Category Section */}
+              <View style={styles.addCategorySection}>
+                <Text style={styles.sectionTitle}>➕ Create New:</Text>
+                <View style={styles.newCategoryInputContainer}>
+                  <TextInput
+                    style={styles.newCategoryInput}
+                    placeholder="Enter new category name..."
+                    value={newCategoryName}
+                    onChangeText={setNewCategoryName}
+                    onSubmitEditing={() => {
+                      if (newCategoryName.trim()) {
+                        saveReelWithNewCategory(newCategoryName.trim());
+                      }
+                    }}
+                  />
+                  <TouchableOpacity 
+                    style={[styles.addCategoryButton, !newCategoryName.trim() && styles.addCategoryButtonDisabled]}
+                    onPress={() => {
+                      if (newCategoryName.trim()) {
+                        saveReelWithNewCategory(newCategoryName.trim());
+                      }
+                    }}
+                    disabled={!newCategoryName.trim() || isSaving}
+                  >
+                    <Text style={styles.addCategoryButtonText}>Add & Save</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </ScrollView>
             
             <View style={styles.modalButtons}>
               <TouchableOpacity 
@@ -836,32 +1102,18 @@ export default function App() {
                   setPendingReelData(null);
                   setPrimarySuggestion('');
                   setCategorySuggestions([]);
+                  setNewCategoryName('');
                 }}
                 disabled={isSaving}
               >
                 <Text style={styles.modalCancelText}>Cancel</Text>
               </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.modalSaveButton}
-                onPress={() => {
-                  // Allow manual classification
-                  setShowCategorySuggestions(false);
-                  setCaption(pendingReelData?.caption || '');
-                  setSharedUrl(pendingReelData?.url || '');
-                  setPendingReelData(null);
-                  setPrimarySuggestion('');
-                  setCategorySuggestions([]);
-                  Alert.alert('Manual Mode', 'Please classify and save manually.');
-                }}
-                disabled={isSaving}
-              >
-                <Text style={styles.modalSaveText}>Manual</Text>
-              </TouchableOpacity>
             </View>
             
             {isSaving && (
-              <Text style={styles.savingText}>Saving reel...</Text>
+              <View style={styles.savingIndicator}>
+                <Text style={styles.savingText}>💾 Saving reel...</Text>
+              </View>
             )}
           </View>
         </View>
@@ -1045,6 +1297,105 @@ const styles = StyleSheet.create({
     color: '#6c757d',
     textAlign: 'center',
   },
+  
+  // Playlist-style Reel Item Styles
+  playlistItem: {
+    backgroundColor: '#fff',
+    flexDirection: 'row',
+    padding: 12,
+    borderRadius: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#e9ecef',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  playlistItemLeft: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  reelThumbnail: {
+    width: 60,
+    height: 60,
+    borderRadius: 8,
+    backgroundColor: '#f8f9fa',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  thumbnailIcon: {
+    fontSize: 24,
+  },
+  reelInfo: {
+    flex: 1,
+    justifyContent: 'space-between',
+  },
+  reelTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#212529',
+    lineHeight: 18,
+    marginBottom: 4,
+  },
+  reelNotes: {
+    fontSize: 12,
+    color: '#6c757d',
+    fontStyle: 'italic',
+    marginBottom: 4,
+  },
+  reelMeta: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  reelCategory: {
+    fontSize: 11,
+    color: '#007bff',
+    fontWeight: '500',
+  },
+  reelTime: {
+    fontSize: 11,
+    color: '#6c757d',
+  },
+  reelUrlPreview: {
+    fontSize: 10,
+    color: '#9ca3af',
+    fontStyle: 'italic',
+  },
+  playlistItemRight: {
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  playButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#007bff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  playButtonIcon: {
+    fontSize: 16,
+    color: '#fff',
+  },
+  deleteButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#dc3545',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deleteButtonIcon: {
+    fontSize: 12,
+  },
+  
+  // Legacy styles for compatibility
   reelItem: {
     backgroundColor: '#fff',
     padding: 15,
@@ -1057,15 +1408,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 8,
-  },
-  reelCategory: {
-    fontSize: 12,
-    color: '#007bff',
-    fontWeight: '600',
-    backgroundColor: '#e3f2fd',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
   },
   reelDate: {
     fontSize: 12,
@@ -1086,10 +1428,6 @@ const styles = StyleSheet.create({
   reelActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
-  },
-  deleteButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
   },
   deleteButtonText: {
     fontSize: 12,
@@ -1305,5 +1643,107 @@ const styles = StyleSheet.create({
     color: '#007bff',
     marginTop: 10,
     fontStyle: 'italic',
+  },
+  
+  // Enhanced Category Selection Modal Styles
+  categoryModalContainer: {
+    maxHeight: '80%',
+  },
+  categoryScrollView: {
+    maxHeight: 400,
+    marginBottom: 15,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#495057',
+    marginBottom: 12,
+    marginTop: 8,
+  },
+  aiSuggestionsSection: {
+    marginBottom: 20,
+  },
+  defaultCategoriesSection: {
+    marginBottom: 20,
+  },
+  customCategoriesSection: {
+    marginBottom: 20,
+  },
+  addCategorySection: {
+    marginBottom: 10,
+  },
+  categoryOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#dee2e6',
+  },
+  primarySuggestionOption: {
+    backgroundColor: '#d4edda',
+    borderColor: '#28a745',
+  },
+  aiSuggestionOption: {
+    backgroundColor: '#e3f2fd',
+    borderColor: '#007bff',
+  },
+  customCategoryOption: {
+    backgroundColor: '#fff3cd',
+    borderColor: '#ffc107',
+  },
+  categoryOptionIcon: {
+    fontSize: 16,
+    marginRight: 10,
+    width: 20,
+  },
+  categoryOptionText: {
+    fontSize: 14,
+    color: '#495057',
+    flex: 1,
+    fontWeight: '500',
+  },
+  recommendedBadge: {
+    backgroundColor: '#28a745',
+    color: '#fff',
+    fontSize: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    fontWeight: '600',
+  },
+  newCategoryInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  newCategoryInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#ced4da',
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 14,
+    marginRight: 8,
+    backgroundColor: '#fff',
+  },
+  addCategoryButton: {
+    backgroundColor: '#007bff',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  addCategoryButtonDisabled: {
+    backgroundColor: '#6c757d',
+  },
+  addCategoryButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  savingIndicator: {
+    alignItems: 'center',
+    marginTop: 10,
   },
 });
