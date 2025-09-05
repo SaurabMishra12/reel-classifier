@@ -158,44 +158,25 @@ export default function App() {
   const handleSharedContent = async (content) => {
     // Extract Instagram URL if present
     const instagramMatch = content.match(/https?:\/\/(?:www\.)?instagram\.com\/reel\/[A-Za-z0-9_-]+\/?/);
-    const finalUrl = instagramMatch ? instagramMatch[0] : content;
+    const detectedUrl = instagramMatch ? instagramMatch[0] : content;
     
-    // Start the category selection workflow
-    handleReelShare(finalUrl);
-  };
-
-  // Handle reel sharing workflow
-  const handleReelShare = async (url) => {
+    // Switch to home view and prompt for URL confirmation
     setCurrentView('home');
     
-    // Store the shared reel data
-    setPendingReelData({
-      url: url,
-      caption: url.includes('instagram.com') ? 'Shared Instagram reel' : url,
-      timestamp: new Date().toISOString()
-    });
-
-    // Get AI suggestions if API key is available
-    if (isApiKeySet) {
-      try {
-        setIsClassifying(true);
-        const captionText = url.includes('instagram.com') ? 
-          'Shared Instagram reel content' : url;
-        
-        const result = await classifyTextWithSuggestions(captionText, customCategories);
-        setPrimarySuggestion(result.primary);
-        setCategorySuggestions(result.suggestions);
-      } catch (error) {
-        console.error('AI suggestion failed:', error);
-        setPrimarySuggestion('');
-        setCategorySuggestions([]);
-      } finally {
-        setIsClassifying(false);
-      }
-    }
-
-    // Show category selection modal
-    setShowCategorySuggestions(true);
+    Alert.alert(
+      '🎬 Instagram Reel Detected',
+      'We detected a shared reel. Please confirm or edit the URL:',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Continue', 
+          onPress: () => {
+            setSharedUrl(detectedUrl);
+            setCaption('');
+          }
+        }
+      ]
+    );
   };
 
   // Auto classify and show suggestions
@@ -244,32 +225,35 @@ export default function App() {
     }
   };
 
-  // Manual classify text
+  // Manual classification workflow
   const handleClassify = async () => {
+    if (!sharedUrl.trim()) {
+      setError('Please enter a reel URL');
+      return;
+    }
+
     if (!caption.trim()) {
-      setError('Please enter some text to classify');
+      setError('Please enter a caption or description');
       return;
     }
 
-    if (!isApiKeySet) {
-      setShowApiKeyModal(true);
-      return;
-    }
-
-    try {
-      setIsClassifying(true);
-      setError('');
-      const result = await classifyText(caption);
-      setCategory(result);
-    } catch (error) {
-      setError(error.message);
-    } finally {
-      setIsClassifying(false);
-    }
+    // Show category selection modal for manual classification
+    setPendingReelData({
+      url: sharedUrl,
+      caption: caption,
+      timestamp: new Date().toISOString()
+    });
+    
+    setShowCategorySuggestions(true);
   };
 
-  // Save reel to storage
+  // Save reel to storage with manual classification
   const saveReel = async (url, text, cat) => {
+    if (!url.trim() || !cat.trim()) {
+      setError('Please enter URL and select a category');
+      return;
+    }
+
     try {
       setIsSaving(true);
       
@@ -278,8 +262,11 @@ export default function App() {
         url: url || sharedUrl,
         caption: text || caption,
         category: cat || category,
+        notes: '',
         timestamp: new Date().toISOString(),
-        dateAdded: new Date().toLocaleDateString()
+        dateAdded: new Date().toLocaleDateString(),
+        timeAdded: new Date().toLocaleTimeString(),
+        description: 'Generating description...' // Placeholder
       };
 
       const updatedReels = [newReel, ...savedReels];
@@ -293,9 +280,17 @@ export default function App() {
       setCaption('');
       setCategory('');
       
-      if (!autoSave) {
-        Alert.alert('Success', 'Reel saved successfully!');
-      }
+      Alert.alert(
+        'Reel Saved! 🎉', 
+        'Your reel has been saved. Generating AI description...',
+        [
+          { text: 'OK' }, 
+          { text: 'View Library', onPress: () => setCurrentView('library') }
+        ]
+      );
+
+      // Generate AI description after saving
+      generateReelDescription(newReel.id, url, text);
       
     } catch (error) {
       Alert.alert('Error', 'Failed to save reel: ' + error.message);
@@ -304,46 +299,49 @@ export default function App() {
     }
   };
 
-  // Save reel with user-selected category from suggestions
+  // Generate AI description for the reel
+  const generateReelDescription = async (reelId, url, caption) => {
+    if (!isApiKeySet) return;
+
+    try {
+      // Create a description prompt
+      const prompt = `Based on this Instagram reel URL and caption, write a brief, engaging description (2-3 sentences) about what this reel might contain:
+
+URL: ${url}
+Caption: ${caption}
+
+Write a description that captures the essence of the content in an engaging way.`;
+
+      const description = await classifyText(prompt);
+      
+      // Update the reel with the generated description
+      const updatedReels = savedReels.map(reel => 
+        reel.id === reelId 
+          ? { ...reel, description: description }
+          : reel
+      );
+      
+      await AsyncStorage.setItem(REELS_STORAGE_KEY, JSON.stringify(updatedReels));
+      setSavedReels(updatedReels);
+      setFilteredReels(updatedReels);
+      
+    } catch (error) {
+      console.error('Failed to generate description:', error);
+      // Update with fallback description
+      const updatedReels = savedReels.map(reel => 
+        reel.id === reelId 
+          ? { ...reel, description: 'Instagram reel content' }
+          : reel
+      );
+      
+      await AsyncStorage.setItem(REELS_STORAGE_KEY, JSON.stringify(updatedReels));
+      setSavedReels(updatedReels);
+      setFilteredReels(updatedReels);
+    }
+  };
+
+  // Save reel with user-selected category
   const saveReelWithSelectedCategory = async (selectedCategory) => {
-    // First prompt for additional notes
-    Alert.prompt(
-      'Add Notes (Optional)',
-      'Any additional details about this reel?',
-      [
-        { text: 'Skip', onPress: () => saveReelToStorage(selectedCategory, '') },
-        { 
-          text: 'Save', 
-          onPress: (notes) => saveReelToStorage(selectedCategory, notes || '')
-        }
-      ],
-      'plain-text',
-      '',
-      'default'
-    );
-  };
-
-  // Save reel with new category (creates category and saves reel)
-  const saveReelWithNewCategory = async (newCategory) => {
-    // First prompt for additional notes
-    Alert.prompt(
-      'Add Notes (Optional)',
-      'Any additional details about this reel?',
-      [
-        { text: 'Skip', onPress: () => saveReelToStorageWithNewCategory(newCategory, '') },
-        { 
-          text: 'Save', 
-          onPress: (notes) => saveReelToStorageWithNewCategory(newCategory, notes || '')
-        }
-      ],
-      'plain-text',
-      '',
-      'default'
-    );
-  };
-
-  // Actually save reel to storage
-  const saveReelToStorage = async (selectedCategory, notes) => {
     try {
       setIsSaving(true);
       
@@ -352,10 +350,10 @@ export default function App() {
         url: pendingReelData.url,
         caption: pendingReelData.caption,
         category: selectedCategory,
-        notes: notes,
         timestamp: pendingReelData.timestamp,
         dateAdded: new Date().toLocaleDateString(),
-        timeAdded: new Date().toLocaleTimeString()
+        timeAdded: new Date().toLocaleTimeString(),
+        description: 'Generating description...' // Placeholder
       };
 
       const updatedReels = [newReel, ...savedReels];
@@ -367,17 +365,20 @@ export default function App() {
       // Clear pending data and close modal
       setPendingReelData(null);
       setShowCategorySuggestions(false);
-      setPrimarySuggestion('');
-      setCategorySuggestions([]);
+      setSharedUrl('');
+      setCaption('');
       
       Alert.alert(
         'Reel Saved! 🎉', 
-        `Your reel has been saved to "${selectedCategory}"${notes ? ' with your notes' : ''}.`,
+        `Your reel has been saved to "${selectedCategory}". AI is generating a description...`,
         [
           { text: 'OK' }, 
           { text: 'View Library', onPress: () => setCurrentView('library') }
         ]
       );
+
+      // Generate AI description after saving
+      generateReelDescription(newReel.id, pendingReelData.url, pendingReelData.caption);
       
     } catch (error) {
       Alert.alert('Error', 'Failed to save reel: ' + error.message);
@@ -386,8 +387,8 @@ export default function App() {
     }
   };
 
-  // Save reel with new category and notes
-  const saveReelToStorageWithNewCategory = async (newCategory, notes) => {
+  // Save reel with new category
+  const saveReelWithNewCategory = async (newCategory) => {
     try {
       setIsSaving(true);
       
@@ -405,10 +406,10 @@ export default function App() {
         url: pendingReelData.url,
         caption: pendingReelData.caption,
         category: newCategory,
-        notes: notes,
         timestamp: pendingReelData.timestamp,
         dateAdded: new Date().toLocaleDateString(),
-        timeAdded: new Date().toLocaleTimeString()
+        timeAdded: new Date().toLocaleTimeString(),
+        description: 'Generating description...' // Placeholder
       };
 
       const updatedReels = [newReel, ...savedReels];
@@ -420,18 +421,21 @@ export default function App() {
       // Clear inputs and close modal
       setPendingReelData(null);
       setShowCategorySuggestions(false);
-      setPrimarySuggestion('');
-      setCategorySuggestions([]);
       setNewCategoryName('');
+      setSharedUrl('');
+      setCaption('');
       
       Alert.alert(
         'Category Created & Reel Saved! 🎉', 
-        `New category "${newCategory}" created and your reel has been saved${notes ? ' with your notes' : ''}.`,
+        `New category "${newCategory}" created and your reel has been saved. AI is generating a description...`,
         [
           { text: 'OK' }, 
           { text: 'View Library', onPress: () => setCurrentView('library') }
         ]
       );
+
+      // Generate AI description after saving
+      generateReelDescription(newReel.id, pendingReelData.url, pendingReelData.caption);
       
     } catch (error) {
       Alert.alert('Error', 'Failed to save reel: ' + error.message);
@@ -573,45 +577,63 @@ export default function App() {
     <ScrollView style={styles.container}>
       <Text style={styles.title}>Instagram Reel Classifier</Text>
       
-      {/* Share Instructions */}
+      {/* Enhanced Instructions */}
       <View style={styles.instructionCard}>
-        <Text style={styles.instructionTitle}>📱 How to use:</Text>
+        <Text style={styles.instructionTitle}>📱 How to Save Reels:</Text>
         <Text style={styles.instructionText}>
-          1. Share any Instagram reel to this app{'\n'}
-          2. Reels will be {autoSave ? 'automatically' : 'manually'} categorized{'\n'}
-          3. Browse your saved reels in the Library tab
+          1. Share Instagram reel to this app OR paste URL below{'\n'}
+          2. Add a caption/description{'\n'}
+          3. Choose a category manually{'\n'}
+          4. AI will generate a description after saving
         </Text>
       </View>
 
       {/* Shared URL Display */}
       {sharedUrl ? (
         <View style={styles.sharedUrlContainer}>
-          <Text style={styles.sectionTitle}>Shared Content:</Text>
+          <Text style={styles.sectionTitle}>📥 Shared Reel URL:</Text>
           <Text style={styles.sharedUrl}>{sharedUrl}</Text>
+          <TouchableOpacity 
+            style={styles.clearUrlButton}
+            onPress={() => {
+              setSharedUrl('');
+              setCaption('');
+            }}
+          >
+            <Text style={styles.clearUrlText}>🗑️ Clear</Text>
+          </TouchableOpacity>
         </View>
       ) : null}
 
       {/* Manual Input */}
       <View style={styles.inputContainer}>
-        <Text style={styles.sectionTitle}>Manual Classification:</Text>
+        <Text style={styles.sectionTitle}>🔗 Reel URL:</Text>
         <TextInput
           style={styles.input}
-          placeholder="Enter reel caption or paste URL here..."
+          placeholder="Paste Instagram reel URL here..."
+          value={sharedUrl}
+          onChangeText={setSharedUrl}
+        />
+        
+        <Text style={styles.sectionTitle}>📝 Caption/Description:</Text>
+        <TextInput
+          style={styles.textAreaInput}
+          placeholder="Enter a caption or description for this reel..."
           value={caption}
           onChangeText={setCaption}
           multiline
-          numberOfLines={4}
+          numberOfLines={3}
         />
         
         <TouchableOpacity 
-          style={[styles.button, isClassifying && styles.buttonDisabled]}
+          style={[styles.button, styles.primaryButton, (!sharedUrl.trim() || !caption.trim()) && styles.buttonDisabled]}
           onPress={handleClassify}
-          disabled={isClassifying}
+          disabled={!sharedUrl.trim() || !caption.trim() || isClassifying}
         >
           {isClassifying ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.buttonText}>🔍 Classify</Text>
+            <Text style={styles.buttonText}>� Choose Category & Save</Text>
           )}
         </TouchableOpacity>
       </View>
@@ -732,9 +754,9 @@ export default function App() {
               }
             </Text>
             
-            {item.notes && (
-              <Text style={styles.reelNotes} numberOfLines={1}>
-                💭 {item.notes}
+            {item.description && (
+              <Text style={styles.reelDescription} numberOfLines={2}>
+                🤖 {item.description}
               </Text>
             )}
             
@@ -987,49 +1009,16 @@ export default function App() {
         </View>
       </Modal>
 
-      {/* Category Selection Modal */}
+      {/* Manual Category Selection Modal */}
       <Modal visible={showCategorySuggestions} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContainer, styles.categoryModalContainer]}>
             <Text style={styles.modalTitle}>📁 Choose Category</Text>
             <Text style={styles.modalDescription}>
-              Save your reel to a category (like adding to a playlist):
+              Select a category for your reel (like choosing a playlist):
             </Text>
             
             <ScrollView style={styles.categoryScrollView} showsVerticalScrollIndicator={false}>
-              {/* AI Suggestions Section */}
-              {(primarySuggestion || categorySuggestions.length > 0) && (
-                <View style={styles.aiSuggestionsSection}>
-                  <Text style={styles.sectionTitle}>🤖 AI Suggestions:</Text>
-                  
-                  {primarySuggestion && (
-                    <TouchableOpacity 
-                      style={[styles.categoryOption, styles.primarySuggestionOption]}
-                      onPress={() => saveReelWithSelectedCategory(primarySuggestion)}
-                      disabled={isSaving}
-                    >
-                      <Text style={styles.categoryOptionIcon}>✨</Text>
-                      <Text style={[styles.categoryOptionText, styles.primarySuggestionText]}>
-                        {primarySuggestion}
-                      </Text>
-                      <Text style={styles.recommendedBadge}>Recommended</Text>
-                    </TouchableOpacity>
-                  )}
-                  
-                  {categorySuggestions.map((suggestion, index) => (
-                    <TouchableOpacity 
-                      key={`ai-${index}`}
-                      style={[styles.categoryOption, styles.aiSuggestionOption]}
-                      onPress={() => saveReelWithSelectedCategory(suggestion)}
-                      disabled={isSaving}
-                    >
-                      <Text style={styles.categoryOptionIcon}>🔮</Text>
-                      <Text style={styles.categoryOptionText}>{suggestion}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
-              
               {/* Default Categories Section */}
               <View style={styles.defaultCategoriesSection}>
                 <Text style={styles.sectionTitle}>📋 Default Categories:</Text>
@@ -1100,8 +1089,6 @@ export default function App() {
                 onPress={() => {
                   setShowCategorySuggestions(false);
                   setPendingReelData(null);
-                  setPrimarySuggestion('');
-                  setCategorySuggestions([]);
                   setNewCategoryName('');
                 }}
                 disabled={isSaving}
@@ -1112,7 +1099,7 @@ export default function App() {
             
             {isSaving && (
               <View style={styles.savingIndicator}>
-                <Text style={styles.savingText}>💾 Saving reel...</Text>
+                <Text style={styles.savingText}>💾 Saving reel and generating description...</Text>
               </View>
             )}
           </View>
@@ -1203,11 +1190,30 @@ const styles = StyleSheet.create({
     padding: 15,
     borderRadius: 10,
     marginBottom: 20,
+    borderLeft: 4,
+    borderLeftColor: '#28a745',
   },
   sharedUrl: {
     fontSize: 14,
-    color: '#2e7d32',
+    color: '#155724',
     fontFamily: 'monospace',
+    backgroundColor: '#d4edda',
+    padding: 8,
+    borderRadius: 5,
+    marginTop: 5,
+  },
+  clearUrlButton: {
+    alignSelf: 'flex-end',
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#dc3545',
+    borderRadius: 15,
+  },
+  clearUrlText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
   },
   inputContainer: {
     marginBottom: 20,
@@ -1216,11 +1222,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#ced4da',
     borderRadius: 8,
-    padding: 15,
+    padding: 12,
     fontSize: 16,
     backgroundColor: '#fff',
-    textAlignVertical: 'top',
     marginBottom: 15,
+  },
+  textAreaInput: {
+    borderWidth: 1,
+    borderColor: '#ced4da',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    backgroundColor: '#fff',
+    marginBottom: 15,
+    minHeight: 80,
+    textAlignVertical: 'top',
   },
   button: {
     backgroundColor: '#007bff',
@@ -1229,6 +1245,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'center',
+  },
+  primaryButton: {
+    backgroundColor: '#007bff',
+    shadowColor: '#007bff',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 3,
   },
   buttonDisabled: {
     backgroundColor: '#6c757d',
@@ -1340,11 +1364,14 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     marginBottom: 4,
   },
-  reelNotes: {
+  reelDescription: {
     fontSize: 12,
-    color: '#6c757d',
+    color: '#007bff',
     fontStyle: 'italic',
-    marginBottom: 4,
+    marginBottom: 6,
+    backgroundColor: '#f0f8ff',
+    padding: 4,
+    borderRadius: 4,
   },
   reelMeta: {
     flexDirection: 'row',
