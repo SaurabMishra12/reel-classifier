@@ -1,0 +1,58 @@
+{
+  "expo": {
+    "name": "Reel Classifier",
+    "slug": "reel-classifier",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "scheme": "reelclassifier",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.yourcompany.reelclassifier"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "package": "com.yourcompany.reelclassifier",
+      "intentFilters": [
+        {
+          "action": "android.intent.action.SEND",
+          "category": "android.intent.category.DEFAULT",
+          "data": {
+            "mimeType": "text/plain"
+          }
+        }
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-share-intent",
+        {
+          "android": [
+            "com.instagram.android"
+          ],
+          "enableBase64ShareAndroid": true
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "your-project-id"
+      }
+    }
+  }
+}
