@@ -1,7 +1,13 @@
 {
   "expo": {
+    "owner": "saurabm",
+    "extra": {
+      "eas": {
+        "projectId": "d9db9ca0-f5f3-4c0d-be2f-081fc11a213a"
+      }
+    },
     "name": "Reel Classifier",
-    "slug": "reel-classifier",
+    "slug": "real-reel",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -48,11 +54,6 @@
           "enableBase64ShareAndroid": true
         }
       ]
-    ],
-    "extra": {
-      "eas": {
-        "projectId": "your-project-id"
-      }
-    }
+    ]
   }
 }

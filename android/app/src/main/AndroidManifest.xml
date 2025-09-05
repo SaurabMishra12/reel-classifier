@@ -27,7 +27,7 @@
         <category android:name="android.intent.category.BROWSABLE"/>
         <data android:scheme="reelclassifier"/>
         <data android:scheme="com.yourcompany.reelclassifier"/>
-        <data android:scheme="exp+reel-classifier"/>
+        <data android:scheme="exp+real-reel"/>
       </intent-filter>
       <intent-filter data-generated="true">
         <action android:name="android.intent.action.android.intent.action.SEND"/>
